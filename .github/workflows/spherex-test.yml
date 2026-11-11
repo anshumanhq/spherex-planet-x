@@ -28,6 +28,14 @@ jobs:
       - name: Run SPHEREx pipeline test
         run: python scripts/spherex_pipeline_test.py
 
+      - name: Decode FLAGS bitmask
+        if: always()
+        run: python scripts/decode_flags.py
+
+      - name: Analyze epoch coverage
+        if: always()
+        run: python scripts/analyze_epochs.py
+
       - name: Upload cutout FITS
         if: always()
         uses: actions/upload-artifact@v4
@@ -46,26 +54,13 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      - name: Upload log
+      - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pipeline-log
-          path: outputs/pipeline_log.txt
-          retention-days: 7
-          if-no-files-found: ignore
-
-      - name: Decode FLAGS bitmask
-        run: python scripts/decode_flags.py
- 
-      - name: Analyze epoch coverage
-        run: python scripts/analyze_epochs.py
-
-      - name: Upload epoch analysis
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: epoch-analysis
-          path: outputs/epoch_analysis.txt
+          name: pipeline-logs
+          path: |
+            outputs/pipeline_log.txt
+            outputs/epoch_analysis.txt
           retention-days: 7
           if-no-files-found: ignore

@@ -1,47 +1,25 @@
-
 # Python
 __pycache__/
-*.py[cod]
+*.pyc
+*.pyo
 venv/
-.venv/
-env/
-
-# Environment variables and secrets
 .env
-.env.*
-!.env.example
+.env.local
 
-# React / Node.js
-node_modules/
-dist/
-build/
-.next/
+# Generated outputs
+outputs/
+static/frames/*.webp
+static/frames/*.gif
+static/frames/*.mp4
+static/frames/*.fits
+
+# Local FITS downloads (root level)
+*.fits
+
+# OS
+.DS_Store
+Thumbs.db
 
 # IDE
 .vscode/
 .idea/
-
-# Operating system
-.DS_Store
-Thumbs.db
-
-# Logs
-*.log
-npm-debug.log*
-
-# Temporary files
-*.tmp
-*.bak
-
-# Large astronomy data files
-*.fits
-*.fit
-*.fts
-
-
-outputs/
-__pycache__/
-*.pyc
-*.fits
-venv/
-.env
