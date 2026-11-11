@@ -48,7 +48,7 @@ export default function LiveDataPanel() {
   async function fetchFrames() {
     setLoading(true); setError(null); setData(null); setFrameIdx(0)
     try {
-      const res = await fetch('/api/cutouts/frames', {
+      const res = await fetch(`${API_BASE}/api/cutouts/frames`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
