@@ -1,7 +1,7 @@
 name: SPHEREx Pipeline Test
 
 on:
-  workflow_dispatch:          # manual trigger bhi
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
@@ -54,3 +54,6 @@ jobs:
           path: outputs/pipeline_log.txt
           retention-days: 7
           if-no-files-found: ignore
+
+      - name: Decode FLAGS bitmask
+        run: python scripts/decode_flags.py
