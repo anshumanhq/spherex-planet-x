@@ -57,3 +57,15 @@ jobs:
 
       - name: Decode FLAGS bitmask
         run: python scripts/decode_flags.py
+ 
+      - name: Analyze epoch coverage
+        run: python scripts/analyze_epochs.py
+
+      - name: Upload epoch analysis
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: epoch-analysis
+          path: outputs/epoch_analysis.txt
+          retention-days: 7
+          if-no-files-found: ignore

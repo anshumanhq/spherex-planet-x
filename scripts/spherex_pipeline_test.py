@@ -93,7 +93,7 @@ log(f"Required present: {present}")
 assert present == required, f"Missing: {required - present}"
 
 image = hdul["IMAGE"].data
-flags = hdul["FLAGS"].data
+flags = hdul["FLAGS"].data.astype(np.int64)   # int64 to allow 32-bit masks
 var = hdul["VARIANCE"].data
 log(f"IMAGE shape={image.shape} dtype={image.dtype}")
 log(f"FLAGS shape={flags.shape} dtype={flags.dtype}")
@@ -127,9 +127,21 @@ log(f"Saved plot: {plot_path}")
 # Step 6: Data quality (reported, NOT fatal)
 # ------------------------------------------------------------
 log("\n=== Step 6: Data quality checks ===")
+# Benign bits observed in QR2 WISE 0855 cutout (see scripts/decode_flags.py):
+#   bit 0,2,11 = minor coverage/detection flags
+#   bit 17,19,21 = footprint/quality-grade flags (interior-heavy = detection-related)
+BENIGN_BITS = {0, 2, 11, 17, 19, 21}
+BENIGN_MASK = sum(1 << b for b in BENIGN_BITS)
+STRICT_MASK = ~BENIGN_MASK & 0xFFFFFFFF
+
 n_bad_flags = int(np.sum(flags != 0))
 frac_bad = n_bad_flags / flags.size
-log(f"Bad-flag pixels: {n_bad_flags}/{flags.size} ({frac_bad*100:.2f}%)")
+strict_bad = int(np.sum((flags & STRICT_MASK) != 0))
+frac_strict = strict_bad / flags.size
+
+log(f"Raw non-zero flags: {n_bad_flags}/{flags.size} ({frac_bad*100:.2f}%)")
+log(f"Strict-bad (ignoring benign bits {sorted(BENIGN_BITS)}): "
+    f"{strict_bad}/{flags.size} ({frac_strict*100:.2f}%)")
 
 finite_var = var[np.isfinite(var)]
 finite_img = image[np.isfinite(image)]
@@ -148,7 +160,7 @@ else:
 
 checks = {
     "WCS present": has_wcs,
-    "Low bad flags (<20%)": frac_bad < 0.20,
+    "Low strict-bad flags (<5%)": frac_strict < 0.05,
     "VARIANCE finite": finite_var.size > 0,
     "IMAGE finite": finite_img.size > 0,
 }
@@ -176,6 +188,7 @@ summary(f"""
 | Bad-flag pixels | `{n_bad_flags}/{flags.size}` ({frac_bad*100:.1f}%) |
 | WCS present | `{has_wcs}` |
 | Cutout size | `{cutout_path.stat().st_size/1024:.1f} KB` |
+| Strict-bad pixels | `{strict_bad}/{flags.size}` ({frac_strict*100:.2f}%) |
 
 **Individual checks:**
 """ + "\n".join(f"- [{'x' if v else ' '}] {k}" for k, v in checks.items()) + """
