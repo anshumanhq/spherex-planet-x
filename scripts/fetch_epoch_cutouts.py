@@ -13,6 +13,7 @@ import argparse
 import io
 import json
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import urlencode
@@ -25,6 +26,7 @@ from astropy.time import Time
 from astropy import units as u
 from astroquery.ipac.irsa import Irsa
 
+
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--ra", type=float, required=True)
@@ -33,27 +35,45 @@ def parse_args():
     p.add_argument("--max-frames", type=int, default=20)
     p.add_argument("--collection", default="spherex_qr2")
     p.add_argument("--out", default="outputs/epoch_frames")
-    p.add_argument("--workers", type=int, default=5)
+    p.add_argument("--workers", type=int, default=3)   # was 5 — IRSA 503 throttle
     return p.parse_args()
 
-def download_one(ra, dec, size, mef_url, out_path: Path) -> dict:
+
+def download_one(ra, dec, size, mef_url, out_path: Path, retries: int = 3) -> dict:
     url = f"{mef_url}?{urlencode({'center': f'{ra:.8f},{dec:.8f}', 'size': str(size)})}"
-    r = requests.get(url, timeout=90)
-    r.raise_for_status()
-    out_path.write_bytes(r.content)
-    hdul = fits.open(io.BytesIO(r.content))
-    try:
-        hdr = hdul["IMAGE"].header
-        meta = {
-            "path": str(out_path),
-            "shape": list(hdul["IMAGE"].data.shape),
-            "dtype": str(hdul["IMAGE"].data.dtype),
-            "mjd_obs": float(hdr.get("MJD-OBS", float("nan"))),
-            "mef_url": mef_url,
-        }
-    finally:
-        hdul.close()
-    return meta
+    last_exc = None
+    for attempt in range(retries):
+        try:
+            r = requests.get(url, timeout=90)
+            r.raise_for_status()
+            out_path.write_bytes(r.content)
+            hdul = fits.open(io.BytesIO(r.content))
+            try:
+                hdr = hdul["IMAGE"].header
+                return {
+                    "path": str(out_path),
+                    "shape": list(hdul["IMAGE"].data.shape),
+                    "dtype": str(hdul["IMAGE"].data.dtype),
+                    "mjd_obs": float(hdr.get("MJD-OBS", float("nan"))),
+                    "mef_url": mef_url,
+                }
+            finally:
+                hdul.close()
+        except requests.HTTPError as e:
+            last_exc = e
+            if e.response is not None and e.response.status_code in (429, 500, 502, 503, 504):
+                wait = 3 * (2 ** attempt)
+                print(f"    retry {attempt+1}/{retries} in {wait}s (HTTP {e.response.status_code})")
+                time.sleep(wait)
+                continue
+            raise
+        except requests.RequestException as e:
+            last_exc = e
+            wait = 3 * (2 ** attempt)
+            print(f"    retry {attempt+1}/{retries} in {wait}s ({type(e).__name__})")
+            time.sleep(wait)
+    raise last_exc
+
 
 def main():
     args = parse_args()
@@ -86,7 +106,19 @@ def main():
         print("⚠  Only 1 epoch exists — time-series flipbook will be a single frame.")
         print("   Consider spectral flipbook (see WCS-WAVE) as fallback.")
 
-    unique = unique[: args.max_frames]
+    # ---- SPREAD selection across full time range ----
+    if len(unique) > args.max_frames:
+        step = len(unique) / args.max_frames
+        picks = sorted({min(int(round(i * step)), len(unique) - 1)
+                        for i in range(args.max_frames)})
+        unique = [unique[p] for p in picks]
+        span_days = float(t_min[unique[-1]] - t_min[unique[0]])
+        print(f"Spread selection: picking {len(unique)} epochs across full range")
+        print(f"  First MJD: {t_min[unique[0]]:.4f}  "
+              f"Last MJD: {t_min[unique[-1]]:.4f}  Span: {span_days:.2f} days")
+    else:
+        print(f"Using all {len(unique)} epochs")
+
     print(f"Downloading: {len(unique)} frame(s)")
 
     tasks = []
@@ -115,6 +147,7 @@ def main():
     manifest.sort(key=lambda m: m["epoch_mjd"])
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
     print(f"\nSaved {len(manifest)} frames + manifest.json → {out_dir}/")
+
 
 if __name__ == "__main__":
     main()
