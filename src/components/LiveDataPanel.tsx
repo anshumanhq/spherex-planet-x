@@ -3,6 +3,7 @@
  */
 import { useState, useEffect } from 'react'
 import { Play, Pause, Loader2, AlertCircle } from 'lucide-react'
+const API_BASE = 'https://spherex-planet-x.onrender.com'
 
 interface Frame {
   frame_index: number
