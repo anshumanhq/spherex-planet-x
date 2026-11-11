@@ -148,7 +148,10 @@ export default function LiveDataPanel() {
           </div>
 
           <div className="bg-black rounded-lg overflow-hidden relative aspect-square max-w-lg mx-auto">
-            <img src={currentFrame.image_url}
+            <img
+  src={currentFrame.image_url.startsWith('http')
+    ? currentFrame.image_url
+    : `${API_BASE}${currentFrame.image_url}`}
               alt={`Epoch ${frameIdx + 1}`}
               className="w-full h-full object-contain"
               style={{ imageRendering: 'pixelated' }} />
