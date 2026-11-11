@@ -1,4 +1,17 @@
-/* main.css - Tailwind directives */
+/* Tailwind v4 is installed but directives are handled via CDN in index.html.
+   Keep this file for project-specific global styles only. */
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+body {
+  margin: 0;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #0b0f19; }
+::-webkit-scrollbar-thumb { background: #1f2a44; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #00f3ff; }

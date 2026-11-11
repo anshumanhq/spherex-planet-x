@@ -4,7 +4,7 @@
  * Matches the original HTML prototype's design language.
  */
 
-import { useAppStore } from '@/src/store'
+import { useAppStore } from '@/store'
 
 /**
  * Header - Branding and live status bar

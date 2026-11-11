@@ -4,18 +4,22 @@ SPHEREx Planet X — FastAPI backend.
 Endpoints:
   GET  /health
   POST /api/cutouts/frames   → flipbook frames as WebP URLs
+  POST /api/explain          → AI interpretation via Gemini (OpenRouter or direct)
 
 Run locally:
   uvicorn app.main:app --reload --port 8000
   → http://localhost:8000/docs
 """
 import io
-import time
+import os
+import asyncio
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 
+import httpx
 import numpy as np
 import requests
 from astropy.coordinates import SkyCoord
@@ -29,6 +33,19 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from PIL import Image
 
+# Optional: direct Gemini SDK (only used if GEMINI_API_KEY is set)
+try:
+    import google.generativeai as genai
+    GENAI_AVAILABLE = True
+except ImportError:
+    GENAI_AVAILABLE = False
+
+# ------------------------------------------------------------
+# Logging
+# ------------------------------------------------------------
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("spherex")
+
 # ------------------------------------------------------------
 # Setup
 # ------------------------------------------------------------
@@ -36,7 +53,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 FRAME_DIR = BASE_DIR / "static" / "frames"
 FRAME_DIR.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="SPHEREx Planet X API", version="0.1.0")
+# AI provider config
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "nvidia/nemotron-3.5-super-vl:free")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+
+app = FastAPI(title="SPHEREx Planet X API", version="0.2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -46,7 +69,7 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 # ------------------------------------------------------------
-# Schemas
+# Schemas — flipbook
 # ------------------------------------------------------------
 class FrameRequest(BaseModel):
     ra: float = Field(..., ge=0, lt=360, description="Right Ascension (deg)")
@@ -72,7 +95,23 @@ class FramesResponse(BaseModel):
     meta: dict
 
 # ------------------------------------------------------------
-# Helpers
+# Schemas — AI explain
+# ------------------------------------------------------------
+class ExplainRequest(BaseModel):
+    ra: float = Field(..., ge=0, lt=360)
+    dec: float = Field(..., ge=-90, le=90)
+    target_name: str = Field("Unknown target")
+    unique_epochs: int = Field(..., ge=1)
+    span_days: float = Field(..., ge=0)
+    cadence_hours: float | None = Field(None, ge=0)
+
+class ExplainResponse(BaseModel):
+    explanation: str
+    provider: str
+    model: str
+
+# ------------------------------------------------------------
+# Helpers — flipbook
 # ------------------------------------------------------------
 def render_webp(image_2d: np.ndarray, out_path: Path) -> None:
     finite = image_2d[np.isfinite(image_2d)]
@@ -85,13 +124,9 @@ def render_webp(image_2d: np.ndarray, out_path: Path) -> None:
         data = (norm * 255).astype(np.uint8)
     Image.fromarray(np.flipud(data), mode="L").save(out_path, "WEBP", quality=85)
 
-
 def fetch_and_render(ra: float, dec: float, mef_url: str,
                      size_deg: float, out_path: Path, retries: int = 3) -> None:
-    """Download cutout + render WebP with retry on 5xx."""
-    cutout_url = (
-        f"{mef_url}?{urlencode({'center': f'{ra:.8f},{dec:.8f}', 'size': str(size_deg)})}"
-    )
+    cutout_url = f"{mef_url}?{urlencode({'center': f'{ra:.8f},{dec:.8f}', 'size': str(size_deg)})}"
     last_exc = None
     for attempt in range(retries):
         try:
@@ -106,36 +141,116 @@ def fetch_and_render(ra: float, dec: float, mef_url: str,
         except requests.HTTPError as e:
             last_exc = e
             if e.response is not None and e.response.status_code in (429, 500, 502, 503, 504):
-                time.sleep(3 * (2 ** attempt))
+                import time as _t
+                _t.sleep(3 * (2 ** attempt))
                 continue
             raise
         except requests.RequestException as e:
             last_exc = e
-            time.sleep(3 * (2 ** attempt))
+            import time as _t
+            _t.sleep(3 * (2 ** attempt))
     raise last_exc
 
 # ------------------------------------------------------------
-# Routes
+# Helpers — AI providers
+# ------------------------------------------------------------
+PROMPT_TEMPLATE = """You are an astrophysicist analyzing NASA SPHEREx near-infrared survey data.
+
+Target: {target_name}
+Position: RA {ra:.4f}°, Dec {dec:.4f}°
+Unique epochs found: {unique_epochs}
+Time span: {span_days:.1f} days
+Cadence: {cadence_str}
+
+Explain what kind of moving object or variable star this could be, and why SPHEREx's 102 infrared bands (0.75–5.0 μm) are useful here. Mention specific physical phenomena (proper motion, photometric variability, dust, water/methane absorption, etc.) that a citizen scientist might be seeing.
+
+Keep it under 100 words. Sound exciting and accessible. Do not use bullet points or headings. Return plain prose only."""
+
+async def call_openrouter(prompt: str) -> str:
+    """Call OpenRouter API (OpenAI-compatible) → returns explanation text."""
+    if not OPENROUTER_API_KEY:
+        raise RuntimeError("OPENROUTER_API_KEY not set")
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        r = await client.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://spherex-planet-x.app",
+                "X-Title": "SPHEREx Planet X",
+            },
+            json={
+                "model": OPENROUTER_MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 2000,            # ← was 300; reasoning models need more
+                "temperature": 0.7,
+                "reasoning": {"enabled": False},  # ← disable reasoning for speed
+            },
+        )
+
+        # Detailed error logging
+        if r.status_code == 429:
+            raise RuntimeError("OpenRouter rate limit")
+        if not r.is_success:
+            body = r.text[:500]
+            logger.error(f"OpenRouter HTTP {r.status_code}: {body}")
+            raise RuntimeError(f"OpenRouter HTTP {r.status_code}: {body}")
+
+        data = r.json()
+
+        # Handle None content OR reasoning-only responses
+        choice = data.get("choices", [{}])[0]
+        msg = choice.get("message", {})
+        content = msg.get("content")
+        reasoning = msg.get("reasoning")
+        finish = choice.get("finish_reason")
+
+        text = (content or reasoning or "").strip()
+
+        if not text:
+            logger.error(f"Empty response. finish_reason={finish}, msg_keys={list(msg.keys())}")
+            raise RuntimeError(
+                f"Empty AI response (finish={finish}). Try a non-reasoning model."
+            )
+
+        return text
+
+def call_gemini_sync(prompt: str) -> str:
+    """Call Google Gemini SDK directly (sync — wraps in asyncio.to_thread)."""
+    if not GEMINI_API_KEY or not GENAI_AVAILABLE:
+        raise RuntimeError("Gemini not available")
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel(GEMINI_MODEL)
+    resp = model.generate_content(prompt)
+    return (resp.text or "").strip()
+
+# ------------------------------------------------------------
+# Routes — health
 # ------------------------------------------------------------
 @app.get("/health")
 def health():
-    return {"status": "ok", "time": datetime.now(timezone.utc).isoformat()}
+    return {
+        "status": "ok",
+        "time": datetime.now(timezone.utc).isoformat(),
+        "ai": {
+            "openrouter": bool(OPENROUTER_API_KEY),
+            "gemini_direct": bool(GEMINI_API_KEY and GENAI_AVAILABLE),
+        },
+    }
 
-
+# ------------------------------------------------------------
+# Routes — flipbook (unchanged logic)
+# ------------------------------------------------------------
 @app.post("/api/cutouts/frames", response_model=FramesResponse)
 def cutouts_frames(req: FrameRequest):
     coord = SkyCoord(req.ra, req.dec, unit="deg", frame="icrs")
-
-    # 1. Query IRSA
     try:
         results = Irsa.query_sia(pos=(coord, 0.05 * u.deg), collection=req.collection)
     except Exception as e:
         raise HTTPException(502, f"IRSA query failed: {e}")
-
     if len(results) == 0:
         raise HTTPException(404, f"No SPHEREx data at RA={req.ra}, Dec={req.dec}")
 
-    # 2. Dedupe by epoch
     t_min = np.array(results["t_min"], dtype=float)
     urls = list(results["access_url"])
     order = np.argsort(t_min)
@@ -147,14 +262,11 @@ def cutouts_frames(req: FrameRequest):
         seen.add(key)
         unique.append(i)
 
-    # 3. SPREAD across full time range
     if len(unique) > req.n_frames:
         step = len(unique) / req.n_frames
-        picks = sorted({min(int(round(i * step)), len(unique) - 1)
-                        for i in range(req.n_frames)})
+        picks = sorted({min(int(round(i * step)), len(unique) - 1) for i in range(req.n_frames)})
         unique = [unique[p] for p in picks]
 
-    # 4. Parallel download + render
     def job(idx: int) -> Frame:
         mjd = float(t_min[idx])
         tag = f"{req.ra:.4f}_{req.dec:.4f}_{mjd:.4f}".replace(".", "p").replace("-", "m")
@@ -170,13 +282,13 @@ def cutouts_frames(req: FrameRequest):
         )
 
     frames: list[Frame] = []
-    with ThreadPoolExecutor(max_workers=3) as pool:   # 3 workers — IRSA-friendly
+    with ThreadPoolExecutor(max_workers=3) as pool:
         futures = {pool.submit(job, i): i for i in unique}
         for fut in as_completed(futures):
             try:
                 frames.append(fut.result())
             except Exception as e:
-                print(f"frame failed: {e}")
+                logger.warning(f"frame failed: {e}")
 
     if not frames:
         raise HTTPException(500, "All frame downloads failed")
@@ -187,11 +299,8 @@ def cutouts_frames(req: FrameRequest):
     span_days = float(ep[-1] - ep[0]) if len(ep) > 1 else 0.0
 
     return FramesResponse(
-        ra=req.ra,
-        dec=req.dec,
-        collection=req.collection,
-        total_found=len(results),
-        returned_frames=len(frames),
+        ra=req.ra, dec=req.dec, collection=req.collection,
+        total_found=len(results), returned_frames=len(frames),
         frames=frames,
         meta={
             "size_deg": req.size_deg,
@@ -200,3 +309,46 @@ def cutouts_frames(req: FrameRequest):
             "unique_epochs": len(seen),
         },
     )
+
+# ------------------------------------------------------------
+# Route — AI explain
+# ------------------------------------------------------------
+@app.post("/api/explain", response_model=ExplainResponse)
+async def explain(req: ExplainRequest):
+    cadence_str = f"{req.cadence_hours:.1f} hours" if req.cadence_hours else "unknown"
+    prompt = PROMPT_TEMPLATE.format(
+        target_name=req.target_name,
+        ra=req.ra, dec=req.dec,
+        unique_epochs=req.unique_epochs,
+        span_days=req.span_days,
+        cadence_str=cadence_str,
+    )
+
+    # ── Attempt 1: OpenRouter ──
+    if OPENROUTER_API_KEY:
+        try:
+            text = await call_openrouter(prompt)
+            return ExplainResponse(
+                explanation=text, provider="openrouter", model=OPENROUTER_MODEL
+            )
+        except Exception as e:
+            logger.warning(f"OpenRouter failed: {e}")
+
+    # ── Attempt 2: Direct Gemini ──
+    if GEMINI_API_KEY and GENAI_AVAILABLE:
+        try:
+            text = await asyncio.to_thread(call_gemini_sync, prompt)
+            if text:
+                return ExplainResponse(
+                    explanation=text, provider="gemini", model=GEMINI_MODEL
+                )
+        except Exception as e:
+            logger.warning(f"Gemini direct failed: {e}")
+
+    # ── Both failed ──
+    if not OPENROUTER_API_KEY and not (GEMINI_API_KEY and GENAI_AVAILABLE):
+        raise HTTPException(
+            503,
+            "AI not configured. Set OPENROUTER_API_KEY or GEMINI_API_KEY in environment.",
+        )
+    raise HTTPException(500, "AI service unavailable. Please try again.")
