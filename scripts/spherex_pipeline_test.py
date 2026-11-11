@@ -93,7 +93,7 @@ log(f"Required present: {present}")
 assert present == required, f"Missing: {required - present}"
 
 image = hdul["IMAGE"].data
-flags = hdul["FLAGS"].data
+flags = hdul["FLAGS"].data.astype(np.int64)   # int64 to allow 32-bit masks
 var = hdul["VARIANCE"].data
 log(f"IMAGE shape={image.shape} dtype={image.dtype}")
 log(f"FLAGS shape={flags.shape} dtype={flags.dtype}")
