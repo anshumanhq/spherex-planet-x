@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NASA SPHEREx Sky Explorer & Planet X Finder</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        space: {
+                            950: '#060911',
+                            900: '#0b0f19',
+                            800: '#151c2e',
+                            700: '#1f2a44',
+                            border: '#2a3859'
+                        },
+                        cyan: {
+                            glow: '#00f3ff',
+                        },
+                        violet: {
+                            glow: '#9d4edd',
+                        },
+                        amber: {
+                            glow: '#ffb703',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Chart.js for SED Plots -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="/src/main.css">
+    <style>
+        /* Custom scrollbar for sci-fi look */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0b0f19;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #1f2a44;
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #00f3ff;
+        }
+        
+        .glow-cyan {
+            box-shadow: 0 0 15px rgba(0, 243, 255, 0.25);
+        }
+        .glow-violet {
+            box-shadow: 0 0 15px rgba(157, 78, 221, 0.25);
+        }
+        .border-glow {
+            border-color: rgba(0, 243, 255, 0.4);
+        }
+
+        /* Pulsing status LED */
+        @keyframes pulse-fast {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(0.92); }
+        }
+        .animate-led {
+            animation: pulse-fast 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+
+        canvas {
+            touch-action: none;
+        }
+    </style>
+</head>
+<body class="bg-space-950 text-slate-100 font-sans antialiased min-h-screen flex flex-col selection:bg-cyan-500 selection:text-black">
+
+    <!-- Main React Root -->
+    <div id="root"></div>
+
+    <!-- Main Javascript Application -->
+    <script type="module">
+        import './src/main.css'
+    </script>
+</body>
+</html>
