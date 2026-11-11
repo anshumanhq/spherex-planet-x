@@ -10,6 +10,7 @@ Run locally:
   → http://localhost:8000/docs
 """
 import io
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,7 +39,7 @@ FRAME_DIR.mkdir(parents=True, exist_ok=True)
 app = FastAPI(title="SPHEREx Planet X API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # MVP — tighten for prod
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -74,7 +75,6 @@ class FramesResponse(BaseModel):
 # Helpers
 # ------------------------------------------------------------
 def render_webp(image_2d: np.ndarray, out_path: Path) -> None:
-    """FITS IMAGE → normalized grayscale WebP (colormap applied client-side)."""
     finite = image_2d[np.isfinite(image_2d)]
     if finite.size == 0:
         data = np.zeros_like(image_2d, dtype=np.uint8)
@@ -85,18 +85,34 @@ def render_webp(image_2d: np.ndarray, out_path: Path) -> None:
         data = (norm * 255).astype(np.uint8)
     Image.fromarray(np.flipud(data), mode="L").save(out_path, "WEBP", quality=85)
 
+
 def fetch_and_render(ra: float, dec: float, mef_url: str,
-                     size_deg: float, out_path: Path) -> None:
+                     size_deg: float, out_path: Path, retries: int = 3) -> None:
+    """Download cutout + render WebP with retry on 5xx."""
     cutout_url = (
         f"{mef_url}?{urlencode({'center': f'{ra:.8f},{dec:.8f}', 'size': str(size_deg)})}"
     )
-    resp = requests.get(cutout_url, timeout=60)
-    resp.raise_for_status()
-    hdul = fits.open(io.BytesIO(resp.content))
-    try:
-        render_webp(hdul["IMAGE"].data, out_path)
-    finally:
-        hdul.close()
+    last_exc = None
+    for attempt in range(retries):
+        try:
+            resp = requests.get(cutout_url, timeout=60)
+            resp.raise_for_status()
+            hdul = fits.open(io.BytesIO(resp.content))
+            try:
+                render_webp(hdul["IMAGE"].data, out_path)
+            finally:
+                hdul.close()
+            return
+        except requests.HTTPError as e:
+            last_exc = e
+            if e.response is not None and e.response.status_code in (429, 500, 502, 503, 504):
+                time.sleep(3 * (2 ** attempt))
+                continue
+            raise
+        except requests.RequestException as e:
+            last_exc = e
+            time.sleep(3 * (2 ** attempt))
+    raise last_exc
 
 # ------------------------------------------------------------
 # Routes
@@ -104,6 +120,7 @@ def fetch_and_render(ra: float, dec: float, mef_url: str,
 @app.get("/health")
 def health():
     return {"status": "ok", "time": datetime.now(timezone.utc).isoformat()}
+
 
 @app.post("/api/cutouts/frames", response_model=FramesResponse)
 def cutouts_frames(req: FrameRequest):
@@ -118,7 +135,7 @@ def cutouts_frames(req: FrameRequest):
     if len(results) == 0:
         raise HTTPException(404, f"No SPHEREx data at RA={req.ra}, Dec={req.dec}")
 
-    # 2. Dedupe by epoch (round to ~1 sec)
+    # 2. Dedupe by epoch
     t_min = np.array(results["t_min"], dtype=float)
     urls = list(results["access_url"])
     order = np.argsort(t_min)
@@ -129,9 +146,15 @@ def cutouts_frames(req: FrameRequest):
             continue
         seen.add(key)
         unique.append(i)
-    unique = unique[: req.n_frames]
 
-    # 3. Parallel download + render
+    # 3. SPREAD across full time range
+    if len(unique) > req.n_frames:
+        step = len(unique) / req.n_frames
+        picks = sorted({min(int(round(i * step)), len(unique) - 1)
+                        for i in range(req.n_frames)})
+        unique = [unique[p] for p in picks]
+
+    # 4. Parallel download + render
     def job(idx: int) -> Frame:
         mjd = float(t_min[idx])
         tag = f"{req.ra:.4f}_{req.dec:.4f}_{mjd:.4f}".replace(".", "p").replace("-", "m")
@@ -147,13 +170,12 @@ def cutouts_frames(req: FrameRequest):
         )
 
     frames: list[Frame] = []
-    with ThreadPoolExecutor(max_workers=5) as pool:
+    with ThreadPoolExecutor(max_workers=3) as pool:   # 3 workers — IRSA-friendly
         futures = {pool.submit(job, i): i for i in unique}
         for fut in as_completed(futures):
             try:
                 frames.append(fut.result())
             except Exception as e:
-                # skip failed frame, keep others
                 print(f"frame failed: {e}")
 
     if not frames:
@@ -162,6 +184,7 @@ def cutouts_frames(req: FrameRequest):
     frames.sort(key=lambda f: f.epoch_mjd)
     ep = [f.epoch_mjd for f in frames]
     cadence_h = float(np.median(np.diff(ep))) * 24.0 if len(ep) > 1 else None
+    span_days = float(ep[-1] - ep[0]) if len(ep) > 1 else 0.0
 
     return FramesResponse(
         ra=req.ra,
@@ -173,6 +196,7 @@ def cutouts_frames(req: FrameRequest):
         meta={
             "size_deg": req.size_deg,
             "cadence_hours": cadence_h,
+            "span_days": span_days,
             "unique_epochs": len(seen),
         },
     )
