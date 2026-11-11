@@ -23,7 +23,7 @@ if fits_path is None:
 print(f"Reading: {fits_path}\n")
 
 with fits.open(fits_path) as hdul:
-    flags = hdul["FLAGS"].data.astype(np.int32)
+    flags = hdul["FLAGS"].data.astype(np.int64)   # was int32 — 32-bit shift overflow
     flags_header = hdul["FLAGS"].header
 
 total = flags.size
