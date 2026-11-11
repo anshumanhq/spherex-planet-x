@@ -140,9 +140,26 @@ function App() {
             />
 
             <DiscoveryLog
-              logs={discoveryLogs}
-              onClear={clearDiscoveryLog}
-            />
+  logs={discoveryLogs}
+  onClear={clearDiscoveryLog}
+  onExport={() => {
+    if (discoveryLogs.length === 0) {
+      alert('No candidates logged yet! Click targets on the visualizer canvas first.')
+      return
+    }
+    let csv = 'Target,RA,Dec,Epoch,Timestamp\n'
+    discoveryLogs.forEach((item: any) => {
+      csv += `"${item.name}","${item.ra}","${item.dec}","${item.epoch}","${item.timestamp || ''}"\n`
+    })
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `spherex_candidates_${Date.now()}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }}
+/>
 
             <ShareModal
               target={target}
