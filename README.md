@@ -52,9 +52,27 @@ Our Minimum Viable Product (MVP) will include:
 
 ## 6. Project Status
 
-🚧 Currently in development.
+### ✅ Completed
+- SPHEREx data access via IRSA SIA (QR2, QR3 fallback)
+- Cutout service integration (0.1° cutouts, ~5 MB per frame)
+- FITS MEF parsing (IMAGE, FLAGS, VARIANCE, ZODI, PSF, WCS-WAVE)
+- WCS validation and quality checks (bitmask-aware FLAGS handling)
+- CI pipeline with artifact upload (GitHub Actions)
+- Epoch coverage analysis for flipbook feasibility
 
----
+### 🚧 In progress
+- FastAPI backend (`app/main.py`)
+- Multi-epoch cutout fetcher
+- Flipbook assembly (animated WebP)
+- React frontend (Lidiya)
+- Gemini AI integration (Prateek)
 
-**Project:** SPHEREx Planet X  
-**Repository:** spherex-planet-x
+### 📋 Next
+- Render deployment
+- End-to-end demo
+
+### Quick start
+```
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+```
