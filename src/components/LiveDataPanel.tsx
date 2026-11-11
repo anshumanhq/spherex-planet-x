@@ -1,10 +1,10 @@
 /**
- * LiveDataPanel — Real SPHEREx flipbook + AI analysis.
- * Calls backend /api/cutouts/frames and /api/explain.
+ * LiveDataPanel — Real SPHEREx flipbook + AI insight + AI chat.
  */
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
-  Play, Pause, Loader2, AlertCircle, Satellite, Clock, Database, Layers, Sparkles, Brain,
+  Play, Pause, Loader2, AlertCircle, Satellite, Clock, Database, Layers,
+  Sparkles, Brain, Send, MessageSquare, CheckCircle2, Activity,
 } from 'lucide-react'
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'
@@ -30,6 +30,10 @@ interface ApiResponse {
     unique_epochs: number
   }
 }
+interface ChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
 
 export default function LiveDataPanel() {
   const [ra, setRa] = useState('133.795129')
@@ -41,21 +45,34 @@ export default function LiveDataPanel() {
   const [frameIdx, setFrameIdx] = useState(0)
   const [playing, setPlaying] = useState(false)
 
-  // AI state
+  // AI insight state
   const [aiText, setAiText] = useState('')
   const [aiDisplay, setAiDisplay] = useState('')
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState<string | null>(null)
   const [aiProvider, setAiProvider] = useState('')
 
-  // Auto-play
+  // Chat state
+  const [chatOpen, setChatOpen] = useState(false)
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [chatInput, setChatInput] = useState('')
+  const [chatLoading, setChatLoading] = useState(false)
+  const [chatError, setChatError] = useState<string | null>(null)
+  const chatScrollRef = useRef<HTMLDivElement>(null)
+
+  // Auto-play flipbook
   useEffect(() => {
     if (!playing || !data || data.frames.length < 2) return
     const t = setInterval(() => setFrameIdx(i => (i + 1) % data.frames.length), 600)
     return () => clearInterval(t)
   }, [playing, data])
 
-  // Typewriter effect for AI text
+  // Auto-scroll chat
+  useEffect(() => {
+    chatScrollRef.current?.scrollTo({ top: chatScrollRef.current.scrollHeight, behavior: 'smooth' })
+  }, [messages, chatLoading])
+
+  // Typewriter for AI insight
   useEffect(() => {
     setAiDisplay('')
     if (!aiText) return
@@ -70,6 +87,7 @@ export default function LiveDataPanel() {
   const fetchFrames = useCallback(async () => {
     setLoading(true); setError(null); setData(null); setFrameIdx(0); setPlaying(false)
     setAiText(''); setAiDisplay(''); setAiError(null); setAiProvider('')
+    setMessages([]); setChatError(null)
     try {
       const res = await fetch(`${BACKEND_URL}/api/cutouts/frames`, {
         method: 'POST',
@@ -96,9 +114,7 @@ export default function LiveDataPanel() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          ra: data.ra,
-          dec: data.dec,
-          target_name: 'WISE 0855',
+          ra: data.ra, dec: data.dec, target_name: 'WISE 0855',
           unique_epochs: data.meta.unique_epochs,
           span_days: data.meta.span_days,
           cadence_hours: data.meta.cadence_hours,
@@ -115,12 +131,59 @@ export default function LiveDataPanel() {
     }
   }, [data])
 
+  const sendChat = useCallback(async () => {
+    const text = chatInput.trim()
+    if (!text || chatLoading) return
+    const newMsg: ChatMessage = { role: 'user', content: text }
+    const updated = [...messages, newMsg]
+    setMessages(updated)
+    setChatInput('')
+    setChatLoading(true)
+    setChatError(null)
+
+    try {
+      const r = await fetch(`${BACKEND_URL}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: updated.slice(-6),  // last 6 turns to keep context small
+          context: data ? {
+            ra: data.ra, dec: data.dec,
+            target_name: 'WISE 0855',
+            unique_epochs: data.meta.unique_epochs,
+            span_days: data.meta.span_days,
+          } : null,
+        }),
+      })
+      if (!r.ok) throw new Error(`HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`)
+      const j = await r.json()
+      setMessages([...updated, { role: 'assistant', content: j.reply }])
+    } catch (e: any) {
+      setChatError(e.message || String(e))
+    } finally {
+      setChatLoading(false)
+    }
+  }, [chatInput, messages, chatLoading, data])
+
   const currentFrame = data?.frames[frameIdx]
   const currentImageUrl = currentFrame
     ? currentFrame.image_url.startsWith('http')
       ? currentFrame.image_url
       : `${BACKEND_URL}${currentFrame.image_url}`
     : null
+
+  // Compute REAL quality stats from response
+  const quality = data ? {
+    frameSuccess: `${data.returned_frames}/${nFrames}`,
+    successPct: Math.round((data.returned_frames / nFrames) * 100),
+    cadence: data.meta.cadence_hours != null
+      ? data.meta.cadence_hours < 24
+        ? `${data.meta.cadence_hours.toFixed(1)}h`
+        : `${(data.meta.cadence_hours / 24).toFixed(1)}d`
+      : '—',
+    spanDays: data.meta.span_days.toFixed(0),
+    collection: data.collection,
+  } : null
 
   return (
     <section className="w-full bg-[#0a0f1c] border border-cyan-500/20 rounded-xl p-4 shadow-[0_0_30px_rgba(0,243,255,0.05)] font-mono">
@@ -164,9 +227,7 @@ export default function LiveDataPanel() {
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
             Downloading from NASA IRSA…
           </div>
-          <div className="text-slate-400">
-            Fetching {nFrames} real SPHEREx epochs. First request: 90-180 sec · Cached: &lt;500 ms
-          </div>
+          <div className="text-slate-400">Fetching {nFrames} real SPHEREx epochs. First request: 90-180 sec · Cached: &lt;500 ms</div>
         </div>
       )}
 
@@ -214,8 +275,24 @@ export default function LiveDataPanel() {
             </button>
           </div>
 
-          {/* AI Analysis Panel */}
-          <div className="bg-[#0a0f1c] border border-cyan-500/30 rounded-lg p-3 shadow-[0_0_20px_rgba(0,243,255,0.08)] space-y-2">
+          {/* Real Quality Stats */}
+          {quality && (
+            <div className="bg-[#0f172a] border border-slate-800 rounded-lg p-3 mb-4">
+              <div className="text-xs font-bold text-slate-200 mb-2 flex items-center gap-2">
+                <Activity className="w-4 h-4 text-emerald-400" />
+                LIVE DATA QUALITY
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                <QualityStat label="Frames" value={quality.frameSuccess} ok={quality.successPct === 100} />
+                <QualityStat label="Success" value={`${quality.successPct}%`} ok={quality.successPct === 100} />
+                <QualityStat label="Cadence" value={quality.cadence} ok />
+                <QualityStat label="Source" value={quality.collection} ok />
+              </div>
+            </div>
+          )}
+
+          {/* AI Insight */}
+          <div className="bg-[#0a0f1c] border border-cyan-500/30 rounded-lg p-3 shadow-[0_0_20px_rgba(0,243,255,0.08)] space-y-2 mb-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-xs font-bold text-slate-200">
                 <Brain className="w-4 h-4 text-cyan-400" />
@@ -254,6 +331,87 @@ export default function LiveDataPanel() {
               </div>
             )}
           </div>
+
+          {/* AI Chat */}
+          <div className="bg-[#0a0f1c] border border-violet-500/30 rounded-lg p-3 shadow-[0_0_20px_rgba(157,78,221,0.08)]">
+            <button
+              onClick={() => setChatOpen(o => !o)}
+              className="w-full flex items-center justify-between text-xs font-bold text-slate-200 hover:text-violet-300 transition"
+            >
+              <span className="flex items-center gap-2">
+                <MessageSquare className="w-4 h-4 text-violet-400" />
+                ASK ABOUT THIS DATA
+              </span>
+              <span className="text-[10px] text-slate-500">{chatOpen ? '▾' : '▸'}</span>
+            </button>
+
+            {chatOpen && (
+              <div className="mt-3 space-y-2">
+                <div
+                  ref={chatScrollRef}
+                  className="bg-[#0f172a] border border-slate-800 rounded-lg p-2 h-56 overflow-y-auto space-y-2"
+                >
+                  {messages.length === 0 && (
+                    <div className="text-slate-500 text-[11px] italic px-2 py-1">
+                      Ask anything about WISE 0855 or SPHEREx:
+                      <div className="mt-1 space-y-0.5 text-slate-400">
+                        <div>• "What's a brown dwarf?"</div>
+                        <div>• "Why does proper motion matter?"</div>
+                        <div>• "What can we learn from 362 days?"</div>
+                      </div>
+                    </div>
+                  )}
+                  {messages.map((m, i) => (
+                    <div
+                      key={i}
+                      className={m.role === 'user'
+                        ? 'text-right'
+                        : 'text-left'}
+                    >
+                      <span
+                        className={
+                          m.role === 'user'
+                            ? 'inline-block bg-violet-500/20 border border-violet-500/40 text-violet-100 px-2.5 py-1.5 rounded-lg text-[11px] max-w-[85%] text-left'
+                            : 'inline-block bg-cyan-500/10 border border-cyan-500/30 text-slate-200 px-2.5 py-1.5 rounded-lg text-[11px] max-w-[85%] text-left'
+                        }
+                      >
+                        {m.content}
+                      </span>
+                    </div>
+                  ))}
+                  {chatLoading && (
+                    <div className="flex items-center gap-2 text-cyan-400 text-[11px]">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      Thinking…
+                    </div>
+                  )}
+                  {chatError && (
+                    <div className="text-red-400 text-[11px] bg-red-950/30 border border-red-500/30 rounded p-1.5">
+                      ⚠ {chatError}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex gap-2">
+                  <input
+                    value={chatInput}
+                    onChange={e => setChatInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat() } }}
+                    placeholder="Ask a question about this observation…"
+                    disabled={chatLoading}
+                    className="flex-1 bg-[#0f172a] border border-slate-700 focus:border-violet-500 rounded px-2 py-1.5 text-xs text-slate-100 outline-none disabled:opacity-50"
+                  />
+                  <button
+                    onClick={sendChat}
+                    disabled={chatLoading || !chatInput.trim()}
+                    className="bg-violet-500 hover:bg-violet-400 disabled:opacity-40 text-slate-950 font-bold px-3 py-1.5 rounded flex items-center gap-1 text-xs transition"
+                  >
+                    {chatLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </>
       )}
 
@@ -273,6 +431,20 @@ function StatCard({ icon, label, value }: { icon: React.ReactNode; label: string
         {icon}{label}
       </div>
       <div className="text-cyan-400 font-bold text-sm mt-0.5">{value}</div>
+    </div>
+  )
+}
+
+function QualityStat({ label, value, ok }: { label: string; value: string; ok?: boolean }) {
+  return (
+    <div className="bg-[#0a0f1c] border border-slate-800 rounded px-2 py-1.5">
+      <div className="text-slate-500 text-[9px] uppercase tracking-wider flex items-center gap-1">
+        {ok && <CheckCircle2 className="w-2.5 h-2.5 text-emerald-400" />}
+        {label}
+      </div>
+      <div className={`font-bold text-sm mt-0.5 ${ok ? 'text-emerald-400' : 'text-amber-400'}`}>
+        {value}
+      </div>
     </div>
   )
 }

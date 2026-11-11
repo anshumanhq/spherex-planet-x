@@ -352,3 +352,124 @@ async def explain(req: ExplainRequest):
             "AI not configured. Set OPENROUTER_API_KEY or GEMINI_API_KEY in environment.",
         )
     raise HTTPException(500, "AI service unavailable. Please try again.")
+
+# ------------------------------------------------------------
+# Schemas — AI chat
+# ------------------------------------------------------------
+class ChatMessage(BaseModel):
+    role: str = Field(..., pattern="^(user|assistant)$")
+    content: str = Field(..., min_length=1, max_length=2000)
+
+class ChatContext(BaseModel):
+    ra: float | None = None
+    dec: float | None = None
+    target_name: str | None = None
+    unique_epochs: int | None = None
+    span_days: float | None = None
+
+class ChatRequest(BaseModel):
+    messages: list[ChatMessage] = Field(..., min_length=1, max_length=20)
+    context: ChatContext | None = None
+
+class ChatResponse(BaseModel):
+    reply: str
+    provider: str
+    model: str
+
+# ------------------------------------------------------------
+# Helpers — chat prompt
+# ------------------------------------------------------------
+def build_chat_system_prompt(ctx: ChatContext | None) -> str:
+    base = (
+        "You are a helpful astrophysics assistant embedded in the SPHEREx Planet X tool. "
+        "Answer the user's questions about the current SPHEREx observation in 1-3 short sentences. "
+        "Be concrete, scientifically accurate, and cite SPHEREx's 102 infrared bands "
+        "(0.75–5.0 μm) and the specific target being viewed when relevant."
+    )
+    if ctx and ctx.target_name:
+        extra = f"\n\nCurrent observation context:"
+        extra += f"\nTarget: {ctx.target_name}"
+        if ctx.ra is not None and ctx.dec is not None:
+            extra += f"\nPosition: RA {ctx.ra:.4f}°, Dec {ctx.dec:.4f}°"
+        if ctx.unique_epochs:
+            extra += f"\nUnique epochs: {ctx.unique_epochs}"
+        if ctx.span_days:
+            extra += f"\nTime span: {ctx.span_days:.1f} days"
+        return base + extra
+    return base
+
+async def call_openrouter_chat(system: str, messages: list[dict]) -> str:
+    if not OPENROUTER_API_KEY:
+        raise RuntimeError("OPENROUTER_API_KEY not set")
+    full_messages = [{"role": "system", "content": system}] + messages
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        r = await client.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://spherex-planet-x.app",
+                "X-Title": "SPHEREx Planet X Chat",
+            },
+            json={
+                "model": OPENROUTER_MODEL,
+                "messages": full_messages,
+                "max_tokens": 1000,
+                "temperature": 0.7,
+                "reasoning": {"enabled": False},
+            },
+        )
+        if r.status_code == 429:
+            raise RuntimeError("OpenRouter rate limit")
+        if not r.is_success:
+            raise RuntimeError(f"OpenRouter HTTP {r.status_code}: {r.text[:300]}")
+        data = r.json()
+        choice = data.get("choices", [{}])[0]
+        msg = choice.get("message", {})
+        text = (msg.get("content") or msg.get("reasoning") or "").strip()
+        if not text:
+            raise RuntimeError(f"Empty AI reply (finish={choice.get('finish_reason')})")
+        return text
+
+def call_gemini_chat_sync(system: str, messages: list[dict]) -> str:
+    if not GEMINI_API_KEY or not GENAI_AVAILABLE:
+        raise RuntimeError("Gemini not available")
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel(
+        GEMINI_MODEL,
+        system_instruction=system,
+    )
+    history = []
+    for m in messages[:-1]:
+        history.append({"role": "user" if m["role"] == "user" else "model", "parts": [m["content"]]})
+    chat = model.start_chat(history=history)
+    last = messages[-1]["content"]
+    resp = chat.send_message(last)
+    return (resp.text or "").strip()
+
+# ------------------------------------------------------------
+# Route — AI chat
+# ------------------------------------------------------------
+@app.post("/api/chat", response_model=ChatResponse)
+async def chat(req: ChatRequest):
+    system = build_chat_system_prompt(req.context)
+    msgs = [{"role": m.role, "content": m.content} for m in req.messages]
+
+    if OPENROUTER_API_KEY:
+        try:
+            reply = await call_openrouter_chat(system, msgs)
+            return ChatResponse(reply=reply, provider="openrouter", model=OPENROUTER_MODEL)
+        except Exception as e:
+            logger.warning(f"OpenRouter chat failed: {e}")
+
+    if GEMINI_API_KEY and GENAI_AVAILABLE:
+        try:
+            reply = await asyncio.to_thread(call_gemini_chat_sync, system, msgs)
+            if reply:
+                return ChatResponse(reply=reply, provider="gemini", model=GEMINI_MODEL)
+        except Exception as e:
+            logger.warning(f"Gemini chat failed: {e}")
+
+    if not OPENROUTER_API_KEY and not (GEMINI_API_KEY and GENAI_AVAILABLE):
+        raise HTTPException(503, "AI not configured.")
+    raise HTTPException(500, "AI chat service unavailable.")

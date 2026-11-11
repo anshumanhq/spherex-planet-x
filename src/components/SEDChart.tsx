@@ -1,6 +1,6 @@
 /**
  * SEDChart — Chart.js line plot of Spectral Energy Distribution.
- * Fixed: ESM import for Chart.js, hooks call moved, missing imports added.
+ * Fixed: explicit canvas dimensions + proper size detection.
  */
 import { useEffect, useRef } from 'react'
 import Chart from 'chart.js/auto'
@@ -10,25 +10,23 @@ interface SedChartProps {
   target: any
   selectedBand: number
   selectedArray: number
-  bands?: any[]
   onBandChange?: (band: number) => void
 }
 
-function SedChart({ target, selectedBand }: SedChartProps) {
-  const chartRef = useRef<HTMLCanvasElement | null>(null)
+function SedChart({ target }: SedChartProps) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const chartInstanceRef = useRef<Chart | null>(null)
 
   useEffect(() => {
-    const ctx = chartRef.current?.getContext('2d')
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const ctx = canvas.getContext('2d')
     if (!ctx) return
 
     const t = PRESET_TARGETS[target.key] || PRESET_TARGETS.wise0855
-
-    if (chartInstanceRef.current) {
-      chartInstanceRef.current.destroy()
-    }
-
     const wavelengthLabels = BAND_CENTER_WAVELENGTHS.slice(0, 12).map(w => `${w}µm`)
+
+    chartInstanceRef.current?.destroy()
 
     chartInstanceRef.current = new Chart(ctx, {
       type: 'line',
@@ -49,10 +47,16 @@ function SedChart({ target, selectedBand }: SedChartProps) {
       options: {
         responsive: true,
         maintainAspectRatio: false,
+        animation: { duration: 800 },
         plugins: {
           legend: { display: false },
           tooltip: {
-            callbacks: { label: (ctx: any) => `Flux: ${ctx.raw} mJy` },
+            backgroundColor: 'rgba(10, 15, 28, 0.95)',
+            borderColor: '#00f3ff',
+            borderWidth: 1,
+            titleColor: '#00f3ff',
+            bodyColor: '#e2e8f0',
+            callbacks: { label: (c: any) => `Flux: ${c.raw} mJy` },
           },
         },
         scales: {
@@ -84,13 +88,24 @@ function SedChart({ target, selectedBand }: SedChartProps) {
         <span className="text-[10px] font-mono text-slate-400">Flux vs λ (µm)</span>
       </div>
 
-      <div className="relative w-full aspect-[4/3] bg-space-950 rounded-lg border border-space-border p-1">
-        <canvas ref={chartRef} />
+      {/* FIXED: explicit min-height so Chart.js has dimensions */}
+      <div className="relative w-full bg-space-950 rounded-lg border border-space-border p-2" style={{ height: '220px' }}>
+        <canvas ref={canvasRef} />
       </div>
 
       <div className="mt-2 grid grid-cols-4 gap-1 text-[10px] font-mono">
         {MOLECULAR_BANDS.map((band) => (
-          <div key={band.name} className="bg-space-950 border border-slate-700 p-1 rounded text-center text-slate-300">
+          <div
+            key={band.name}
+            className="bg-space-950 border p-1 rounded text-center text-slate-300"
+            style={{
+              borderColor:
+                band.color === 'cyan' ? 'rgba(0,243,255,0.3)' :
+                band.color === 'violet' ? 'rgba(157,78,221,0.3)' :
+                band.color === 'amber' ? 'rgba(255,183,3,0.3)' :
+                'rgba(16,185,129,0.3)',
+            }}
+          >
             <div className="font-bold">{band.name}</div>
             <div className="text-slate-400">{band.wavelengths.map(w => `${w}µm`).join(' & ')}</div>
           </div>
