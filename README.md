@@ -173,14 +173,14 @@ FLAGS bitmask analysis reveals bit 21 (28.8% of pixels) is a **benign coverage f
 
 ### 1. Clone the Repository
 
-'''
+```
 git clone https://github.com/shrikanthnahak1506-svg/spherex-planet-x.git
 cd spherex-planet-x
-'''
+```
 
 ### 2. Backend Setup (Terminal 1)
 
-'''bash
+```bash
 # Install Python dependencies
 pip install -r requirements.txt
 
@@ -195,13 +195,13 @@ export OPENROUTER_MODEL="nvidia/nemotron-3.5-super-vl:free"
 
 # Start FastAPI server
 uvicorn app.main:app --reload --port 8000
-'''
+```
 
 **Verify backend**: http://127.0.0.1:8000/health → should return `{"status":"ok", "ai":{"openrouter":true}}`
 
 ### 3. Frontend Setup (Terminal 2)
 
-'''bash
+```bash
 # Install Node dependencies
 npm install
 
@@ -213,7 +213,7 @@ npm run dev
 
 # Or on Windows:
 npm.cmd run dev
-'''
+```
 
 **Open**: http://localhost:5173
 
@@ -231,11 +231,11 @@ npm.cmd run dev
 
 See [`.env.example`](.env.example) for full template:
 
-'''bash
+```bash
 OPENROUTER_API_KEY=sk-or-v1-...       # Required for AI features
 OPENROUTER_MODEL=nvidia/nemotron-3.5-super-vl:free
 VITE_BACKEND_URL=http://localhost:8000  # Frontend backend URL
-'''
+```
 
 > ⚠️ **Never commit `.env`** — it's in `.gitignore`.
 
@@ -254,7 +254,7 @@ VITE_BACKEND_URL=http://localhost:8000  # Frontend backend URL
 
 ### Example Request
 
-'''bash
+```bash
 curl -X POST https://spherex-planet-x.onrender.com/api/cutouts/frames \
   -H "Content-Type: application/json" \
   -d '{
@@ -264,11 +264,11 @@ curl -X POST https://spherex-planet-x.onrender.com/api/cutouts/frames \
     "n_frames": 5,
     "collection": "spherex_qr2"
   }'
-'''
+```
 
 ### Example Response
 
-'''json
+```json
 {
   "total_found": 278,
   "returned_frames": 5,
@@ -285,13 +285,13 @@ curl -X POST https://spherex-planet-x.onrender.com/api/cutouts/frames \
     "cadence_hours": 2104.93
   }
 }
-'''
+```
 
 ---
 
 ## 🏗️ Architecture
 
-'''
+```
 User (browser)
     ↓ RA/Dec input or ?ra=X&dec=Y URL
 Frontend (React + Vite)
@@ -312,7 +312,7 @@ Backend
 Frontend ← JSON response
     ↓ Flipbook plays + AI analyzes
 User sees 13 months of SPHEREx data
-'''
+```
 
 **Deep-dive**: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
@@ -320,7 +320,7 @@ User sees 13 months of SPHEREx data
 
 ## 📁 Project Structure
 
-'''
+```
 spherex-planet-x/
 ├── .github/workflows/         # CI pipeline (real IRSA tests)
 ├── app/main.py                # FastAPI backend (3 endpoints)
@@ -349,7 +349,7 @@ spherex-planet-x/
 ├── vite.config.ts             # Dev proxy
 ├── LICENSE                    # MIT
 └── README.md                  # ← You are here
-'''
+```
 
 ---
 
@@ -411,6 +411,7 @@ Released under the [**MIT License**](LICENSE).
 - **Astropy** and **Astroquery** communities for the tools
 - **OpenRouter** for free AI model access
 
+---
 ---
 
 <div align="center">
