@@ -1,14 +1,12 @@
 /**
- * Main Application — SPHEREx Planet X
- * Layout:
- *   1. Header (branding + live status)
- *   2. LiveDataPanel (real NASA data + AI analysis)  ← full width
- *   3. Design vision components (canvas viewer, SED, catalogs, etc.)
- *   4. Footer
+ * Main App — Header + LiveDataPanel + Design Vision + Footer + ShareModal.
  */
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import useAppStore from '@/store'
-import { PRESET_TARGETS, QUICK_LOAD_PRESETS, SPHEREX_ARRAYS, TOTAL_BAND_COUNT, BAND_CENTER_WAVELENGTHS, MOLECULAR_BANDS } from '@/constants/presets'
+import {
+  PRESET_TARGETS, QUICK_LOAD_PRESETS, SPHEREX_ARRAYS, TOTAL_BAND_COUNT,
+  MOLECULAR_BANDS,
+} from '@/constants/presets'
 import { useTargetState, useViewerState, useOverlayState, useDiscoveryState } from '@/store'
 
 import Header from '@/components/Header'
@@ -32,12 +30,14 @@ function App() {
   const {
     setTarget, setCoordinates, setEpoch, togglePlay, setFPS, nextFrame, prevFrame,
     setSelectedBand, setSelectedArray, setMode, zoomIn, zoomOut, resetView, toggleOverlay,
-    addDiscoveryLog, clearDiscoveryLog, setUrlParameter, setFOV,
+    addDiscoveryLog, clearDiscoveryLog, setFOV,
   } = useAppStore.getState()
+
+  const [shareOpen, setShareOpen] = useState(false)
 
   const target = PRESET_TARGETS[targetKey] || PRESET_TARGETS.wise0855
 
-  // Sync URL params → store on mount
+  // Sync URL params → mockup store on mount (design vision sync only)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     if (params.has('target') && PRESET_TARGETS[params.get('target')!]) {
@@ -50,18 +50,13 @@ function App() {
 
   return (
     <div className="min-h-screen bg-space-950 text-slate-100 font-mono">
-      <Header />
+      <Header onShareClick={() => setShareOpen(true)} />
 
       <main className="flex-1 max-w-[1800px] w-full mx-auto p-3 lg:p-4 space-y-4">
-
-        {/* ═══════════════════════════════════════════════════ */}
-        {/* LIVE REAL DATA PANEL — full width, includes AI     */}
-        {/* ═══════════════════════════════════════════════════ */}
+        {/* Live panel with real data + AI */}
         <LiveDataPanel />
 
-        {/* ═══════════════════════════════════════════════════ */}
-        {/* DESIGN VISION — interactive mockup components      */}
-        {/* ═══════════════════════════════════════════════════ */}
+        {/* Design Vision — mockup with interactive controls */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 pt-4 border-t border-slate-800">
           <div className="lg:col-span-12 mb-2">
             <h2 className="text-xs font-mono text-slate-500 uppercase tracking-wider">
@@ -69,7 +64,6 @@ function App() {
             </h2>
           </div>
 
-          {/* LEFT: controls + canvas */}
           <div className="lg:col-span-8 flex flex-col space-y-3">
             <TargetNavigator
               targetKey={targetKey}
@@ -80,7 +74,6 @@ function App() {
               quickLoadPresets={QUICK_LOAD_PRESETS}
               onFovChange={(val: number) => setFOV(val)}
             />
-
             <SkyViewerCanvas
               target={target}
               fov={fov}
@@ -108,7 +101,6 @@ function App() {
             />
           </div>
 
-          {/* RIGHT: analytics panels */}
           <div className="lg:col-span-4 flex flex-col space-y-3">
             <SEDChart
               target={target}
@@ -116,7 +108,6 @@ function App() {
               selectedArray={selectedArray}
               bands={MOLECULAR_BANDS}
             />
-
             <BandSelector
               arrays={SPHEREX_ARRAYS}
               totalBands={TOTAL_BAND_COUNT}
@@ -125,50 +116,36 @@ function App() {
               onBandChange={setSelectedBand}
               onArrayChange={setSelectedArray}
             />
-
             <CatalogOverlays
               overlays={overlays}
               onToggleGaia={(key, value) => toggleOverlay(key)}
               onToggleWise={(key, value) => toggleOverlay(key)}
               onToggleSimbad={(key, value) => toggleOverlay(key)}
             />
-
             <MetadataPanel
               target={target}
               selectedBand={selectedBand}
               selectedArray={selectedArray}
             />
-
             <DiscoveryLog
-  logs={discoveryLogs}
-  onClear={clearDiscoveryLog}
-  onExport={() => {
-    if (discoveryLogs.length === 0) {
-      alert('No candidates logged yet! Click targets on the visualizer canvas first.')
-      return
-    }
-    let csv = 'Target,RA,Dec,Epoch,Timestamp\n'
-    discoveryLogs.forEach((item: any) => {
-      csv += `"${item.name}","${item.ra}","${item.dec}","${item.epoch}","${item.timestamp || ''}"\n`
-    })
-    const blob = new Blob([csv], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `spherex_candidates_${Date.now()}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
-  }}
-/>
-
-            <ShareModal
-              target={target}
-              ra={ra}
-              dec={dec}
-              fov={fov}
-              selectedBand={selectedBand}
-              onCopyUrl={() => {
-                navigator.clipboard.writeText(window.location.href)
+              logs={discoveryLogs}
+              onClear={clearDiscoveryLog}
+              onExport={() => {
+                if (discoveryLogs.length === 0) {
+                  alert('No candidates logged yet! Click targets on the visualizer canvas first.')
+                  return
+                }
+                let csv = 'Target,RA,Dec,Epoch,Timestamp\n'
+                discoveryLogs.forEach((item: any) => {
+                  csv += `"${item.name}","${item.ra}","${item.dec}","${item.epoch}","${item.timestamp || ''}"\n`
+                })
+                const blob = new Blob([csv], { type: 'text/csv' })
+                const url = URL.createObjectURL(blob)
+                const a = document.createElement('a')
+                a.href = url
+                a.download = `spherex_candidates_${Date.now()}.csv`
+                a.click()
+                URL.revokeObjectURL(url)
               }}
             />
           </div>
@@ -176,6 +153,9 @@ function App() {
       </main>
 
       <Footer />
+
+      {/* Global share modal — opens from Header */}
+      <ShareModal open={shareOpen} onClose={() => setShareOpen(false)} />
     </div>
   )
 }
