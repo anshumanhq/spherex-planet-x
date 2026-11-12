@@ -4,7 +4,7 @@
  * Matches the original HTML prototype's design language.
  */
 
-import { useAppStore } from '@/store'
+
 
 /**
  * Header - Branding and live status bar
@@ -15,9 +15,11 @@ import { useAppStore } from '@/store'
  - 102 IR Bands status
  - Share Coordinates and Embed buttons
  */
-function Header() {
-  const { setUrlParameter } = useAppStore.getState()
+interface HeaderProps {
+  onShareClick?: () => void
+}
 
+function Header({ onShareClick }: HeaderProps) {
   return (
     <header className="border-b border-space-border bg-space-900/90 backdrop-blur-md sticky top-0 z-50 px-4 py-2.5">
       <div className="max-w-[1800px] mx-auto flex flex-wrap items-center justify-between gap-4">
@@ -50,7 +52,11 @@ function Header() {
 
         {/* Header Action Controls */}
         <div className="flex items-center space-x-2">
-          <button id="btnShareUrl" onClick={() => setUrlParameter('target', 'wise0855')} className="px-3 py-1.5 rounded-lg bg-space-800 hover:bg-space-700 border border-space-border text-xs font-medium text-slate-200 transition flex items-center space-x-2">
+          <button
+            id="btnShareUrl"
+            onClick={onShareClick}
+            className="px-3 py-1.5 rounded-lg bg-space-800 hover:bg-space-700 border border-space-border text-xs font-medium text-slate-200 transition flex items-center space-x-2"
+          >
             <i className="fa-solid fa-share-nodes text-cyan-400"></i>
             <span>Share Coordinates</span>
           </button>
