@@ -8,8 +8,8 @@ Team workflow for SPHEREx Planet X.
 
 | Branch | Purpose | Protection |
 |---|---|---|
-| `main` | Production-ready, demo-quality | Protected — requires PR + green CI |
-| `develop` | Integration branch | Merge features here first |
+| `main` | Production, deployed | Protected — requires PR + green CI |
+| `develop` | Integration | Merge features here first |
 | `feature/<name>` | New features | — |
 | `fix/<name>` | Bug fixes | — |
 | `chore/<name>` | Tooling, deps, docs | — |
@@ -44,12 +44,12 @@ git push origin feature/short-name
 - Base: `main`
 - Compare: `feature/short-name`
 - Wait for CI (`test-pipeline`) to pass
-- Get team review if needed
+- Review if needed
 - **Squash and merge**
 
 ### 5. Delete branch after merge
 
-GitHub auto-deletes with "Delete branch" button after merge.
+GitHub auto-deletes with "Delete branch" after merge.
 
 ---
 
@@ -61,10 +61,8 @@ GitHub auto-deletes with "Delete branch" button after merge.
 | `fix:` | Bug fix |
 | `chore:` | Tooling, deps, cleanup |
 | `docs:` | Documentation only |
-| `test:` | Test additions / changes |
-| `refactor:` | Code restructure (no behavior change) |
-
-Example: `feat: add retry logic to cutout fetch`
+| `test:` | Tests |
+| `refactor:` | Restructure (no behavior change) |
 
 ---
 
@@ -88,6 +86,11 @@ Every PR runs `.github/workflows/spherex-test.yml`:
 
 ```
 pip install -r requirements.txt
+
+# Set AI env var (PowerShell)
+$env:OPENROUTER_API_KEY = "sk-or-v1-..."
+$env:OPENROUTER_MODEL = "nvidia/nemotron-3.5-super-vl:free"
+
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -107,11 +110,14 @@ Test: http://localhost:5173
 
 ### Full integration test
 
-1. Backend running on `:8000`
-2. Frontend running on `:5173`
-3. Browser: enter RA `133.795129`, Dec `-7.245147`
-4. Click "Fetch Live Data"
-5. Verify flipbook plays
+1. Backend on `:8000`
+2. Frontend on `:5173`
+3. Browser: RA `133.795129`, Dec `-7.245147`, Frames `5`
+4. Click **FETCH** → flipbook loads
+5. Click **GENERATE AI INSIGHT** → text streams
+6. Open **ASK ABOUT THIS DATA** → type question → AI replies
+7. Click **Share Coordinates** → modal shows current URL with params
+8. Open URL in new tab → auto-fetches same observation
 
 ---
 
@@ -119,14 +125,14 @@ Test: http://localhost:5173
 
 ### Use `npm.cmd` instead of `npm`
 
-PowerShell blocks `.ps1` scripts by default. Use the `.cmd` wrapper:
+PowerShell blocks `.ps1` scripts by default:
 
 ```
 npm.cmd install
 npm.cmd run dev
 ```
 
-**Permanent fix** (one-time, no admin needed):
+**Permanent fix** (one-time):
 
 ```
 Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
@@ -134,7 +140,7 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 
 ### Use `;` instead of `&&`
 
-PowerShell 5.1 doesn't support `&&`. Use `;` or separate lines:
+PowerShell 5.1 doesn't support `&&`:
 
 ```
 git checkout main; git pull origin main
@@ -145,7 +151,7 @@ git checkout main; git pull origin main
 ## Directory Layout
 
 ```
-app/          — FastAPI backend
+app/          — FastAPI backend (3 endpoints)
 scripts/      — Data pipeline + utilities (CLI-runnable)
 src/          — React frontend
 static/       — Served files (flipbook WebP cache)
@@ -159,13 +165,30 @@ docs/         — Project documentation
 
 | Item | Why |
 |---|---|
-| `node_modules/` | Auto-installed via `npm install` |
+| `node_modules/` | Auto-installed |
 | `outputs/` | Local artifacts (FITS, plots) |
-| `static/frames/*.webp` | Generated at runtime (cached images) |
-| `.env` / `.env.local` | Secrets / env-specific config |
-| `venv/` | Python virtual env (auto-created) |
+| `static/frames/*.webp` | Generated at runtime |
+| `.env` / `.env.local` | **Secrets** — API keys |
+| `venv/` | Python virtual env |
 
-`.gitignore` handles all these automatically.
+`.gitignore` handles all these automatically. **Never commit API keys.**
+
+---
+
+## AI Configuration
+
+Backend reads from environment variables:
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `OPENROUTER_API_KEY` | Yes (for AI) | Primary AI provider |
+| `OPENROUTER_MODEL` | No (defaults to Nemotron) | Model name |
+| `GEMINI_API_KEY` | No | Direct Gemini fallback |
+| `GEMINI_MODEL` | No | Fallback model |
+
+**Never hardcode API keys in source files.** Use `.env` (gitignored) or shell env vars.
+
+**Rotate keys** if they appear in chat/commits: https://openrouter.ai/keys
 
 ---
 
@@ -179,7 +202,7 @@ python scripts/decode_flags.py
 python scripts/analyze_epochs.py
 ```
 
-All three must pass locally before pushing (CI runs the same).
+All three must pass locally before pushing.
 
 ### Frontend build test
 
@@ -187,7 +210,25 @@ All three must pass locally before pushing (CI runs the same).
 npm.cmd run build
 ```
 
-Should complete without errors.
+Should complete without TypeScript errors.
+
+### AI endpoint smoke test
+
+```powershell
+$body = @{
+    ra = 133.795129
+    dec = -7.245147
+    target_name = "WISE 0855"
+    unique_epochs = 142
+    span_days = 362
+    cadence_hours = 2104.93
+} | ConvertTo-Json
+
+Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/explain" `
+    -Method Post -Body $body -ContentType "application/json"
+```
+
+Expected: JSON with `explanation`, `provider`, `model`.
 
 ---
 
@@ -195,11 +236,11 @@ Should complete without errors.
 
 | Script | Purpose |
 |---|---|
-| `spherex_pipeline_test.py` | End-to-end CI test: query → download → parse → quality |
-| `decode_flags.py` | FLAGS bitmask analysis (bit-level breakdown) |
-| `analyze_epochs.py` | Feasibility report: are there enough epochs? |
-| `fetch_epoch_cutouts.py` | CLI bulk downloader (for offline work) |
-| `assemble_flipbook.py` | Convert frames → animated WebP/GIF |
+| `spherex_pipeline_test.py` | End-to-end CI test |
+| `decode_flags.py` | FLAGS bitmask analysis |
+| `analyze_epochs.py` | Epoch feasibility report |
+| `fetch_epoch_cutouts.py` | CLI bulk downloader |
+| `assemble_flipbook.py` | Frames → animated WebP/GIF |
 
 Run any script directly:
 
@@ -215,4 +256,4 @@ Open a GitHub Issue with:
 - Branch name
 - Error message (full traceback)
 - Steps to reproduce
-- OS + Python version
+- OS + Python + Node version
